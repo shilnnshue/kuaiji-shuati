@@ -31,8 +31,6 @@ if "subject" not in st.session_state:
     st.session_state.q_list = []
     st.session_state.index = 0
     st.session_state.exam_answers = []
-    st.session_state.selected_options = []
-    st.session_state.radio_choice = None
     st.session_state.show_result = False
     st.session_state.result_info = None
 
@@ -95,9 +93,9 @@ def display_question(q, shuffle):
     return opts, None
 
 def check_selected(q, selected, mapping=None):
-    """selected: 对于多选是列表，对于单选/判断是字符串"""
+    """selected: 对于多选是列表（可能为空），对于单选/判断是字符串"""
     if q['type'] == 'multiple':
-        if not selected:   # 空列表表示未选任何选项
+        if not selected:   # 空列表表示没有选择任何选项
             return False, "", q['answer']
         if mapping:
             selected_orig = [mapping[ch] for ch in selected if ch in mapping]
@@ -116,8 +114,6 @@ def check_selected(q, selected, mapping=None):
 def clear_practice_state():
     st.session_state.show_result = False
     st.session_state.result_info = None
-    st.session_state.selected_options = []
-    st.session_state.radio_choice = None
 
 # ---------------------------- 页面内容 ----------------------------
 st.title("📖 会计刷题系统")
@@ -291,8 +287,7 @@ elif st.session_state.mode == "practice":
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
-        # 存储用户选择的原始字符串（多选用列表）
-        selected_raw = None
+        selected_raw = None  # 用于存储用户的选择结果
         
         if q['type'] == 'multiple':
             selected_keys = []
@@ -305,7 +300,7 @@ elif st.session_state.mode == "practice":
                 else:
                     orig_selected = selected_keys
                 orig_selected.sort()
-                selected_raw = ''.join(orig_selected)  # 用于判题
+                selected_raw = ''.join(orig_selected)
             else:
                 selected_raw = []   # 空列表表示未选
         elif q['type'] == 'judge':
@@ -341,7 +336,7 @@ elif st.session_state.mode == "practice":
         if st.session_state.show_result and st.session_state.result_info:
             st.info(st.session_state.result_info)
         
-        # 上一题 / 下一题按钮（始终显示，只要存在）
+        # 上一题 / 下一题按钮（始终显示）
         col_left, col_mid, col_right = st.columns([1,1,1])
         with col_left:
             if idx > 0:
