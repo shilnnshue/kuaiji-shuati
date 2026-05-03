@@ -36,7 +36,7 @@ if "subject" not in st.session_state:
     st.session_state.show_result = False
     st.session_state.result_info = None
 
-# ---------------------------- 侧边栏（保持不变） ----------------------------
+# ---------------------------- 侧边栏 ----------------------------
 with st.sidebar:
     st.header("⚙️ 设置")
     new_subject = st.selectbox("选择科目", list(SUBJECTS.keys()))
@@ -194,7 +194,7 @@ elif st.session_state.mode == "exam_setup":
         st.session_state.mode = "menu"
         st.rerun()
 
-# 考试中
+# 考试中（保持原样）
 elif st.session_state.mode == "exam":
     total = len(st.session_state.q_list)
     idx = st.session_state.index
@@ -217,7 +217,6 @@ elif st.session_state.mode == "exam":
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
-        # 根据题型显示不同组件（纵向排列）
         if q['type'] == 'multiple':
             selected = []
             for k, v in opts.items():
@@ -270,7 +269,7 @@ elif st.session_state.mode == "search":
         st.session_state.mode = "menu"
         st.rerun()
 
-# ---------------------------- 普通练习（支持键盘左右键）----------------------------
+# ---------------------------- 普通练习（支持左右键，上下题同时显示）----------------------------
 elif st.session_state.mode == "practice":
     total = len(st.session_state.q_list)
     idx = st.session_state.index
@@ -287,7 +286,6 @@ elif st.session_state.mode == "practice":
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
-        # 存储用户选择
         user_ans = None
         
         if q['type'] == 'multiple':
@@ -335,7 +333,7 @@ elif st.session_state.mode == "practice":
         if st.session_state.show_result and st.session_state.result_info:
             st.info(st.session_state.result_info)
         
-        # 上一题 / 下一题 按钮（用于鼠标点击和键盘触发）
+        # 上一题 / 下一题 按钮（始终显示，只要存在即可）
         col_left, col_mid, col_right = st.columns([1,1,1])
         with col_left:
             if idx > 0:
@@ -345,7 +343,7 @@ elif st.session_state.mode == "practice":
                     st.session_state.result_info = None
                     st.rerun()
         with col_right:
-            if st.session_state.show_result and idx < total - 1:
+            if idx < total - 1:
                 if st.button("下一题 ➡️", key="next_btn"):
                     st.session_state.index += 1
                     st.session_state.show_result = False
@@ -356,13 +354,11 @@ elif st.session_state.mode == "practice":
                 st.session_state.mode = "menu"
                 st.rerun()
         
-        # 注入 JavaScript 监听左右键盘，模拟点击按钮
+        # 键盘左右键监听
         st.markdown("""
         <script>
         document.addEventListener('keydown', function(e) {
             if (e.key === 'ArrowLeft') {
-                var prevBtn = document.querySelector('button[kind="secondary"][data-testid="baseButton-secondary"]');
-                // 查找包含"上一题"文字的按钮
                 var buttons = document.querySelectorAll('button');
                 for (var btn of buttons) {
                     if (btn.innerText.includes('上一题')) {
@@ -382,5 +378,3 @@ elif st.session_state.mode == "practice":
         });
         </script>
         """, unsafe_allow_html=True)
-
-# 结束
