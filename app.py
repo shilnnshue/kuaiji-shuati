@@ -31,6 +31,8 @@ if "subject" not in st.session_state:
     st.session_state.q_list = []
     st.session_state.index = 0
     st.session_state.exam_answers = []
+    st.session_state.selected_options = []
+    st.session_state.radio_choice = None
     st.session_state.show_result = False
     st.session_state.result_info = None
 
@@ -93,18 +95,24 @@ def display_question(q, shuffle):
     return opts, None
 
 def check_selected(q, selected, mapping=None):
-    """selected: 对于多选是列表（可能为空），对于单选/判断是字符串"""
+    """selected: 对于多选，可以是列表或已排序的字符串；对于单选/判断是单个字母"""
     if q['type'] == 'multiple':
-        if not selected:   # 空列表表示没有选择任何选项
+        if not selected:   # 空列表或空字符串
             return False, "", q['answer']
-        if mapping:
-            selected_orig = [mapping[ch] for ch in selected if ch in mapping]
+        # 如果 selected 已经是字符串，直接使用
+        if isinstance(selected, str):
+            user_ans = selected
         else:
-            selected_orig = selected
-        selected_orig.sort()
-        user_ans = ''.join(selected_orig)
+            # selected 是列表
+            if mapping:
+                selected_orig = [mapping[ch] for ch in selected if ch in mapping]
+            else:
+                selected_orig = selected
+            selected_orig.sort()
+            user_ans = ''.join(selected_orig)
         return user_ans == q['answer'], user_ans, q['answer']
     else:
+        # 单选或判断
         if mapping and selected in mapping:
             selected_orig = mapping[selected]
         else:
@@ -114,6 +122,8 @@ def check_selected(q, selected, mapping=None):
 def clear_practice_state():
     st.session_state.show_result = False
     st.session_state.result_info = None
+    st.session_state.selected_options = []
+    st.session_state.radio_choice = None
 
 # ---------------------------- 页面内容 ----------------------------
 st.title("📖 会计刷题系统")
@@ -223,18 +233,28 @@ elif st.session_state.mode == "exam":
             for k, v in opts.items():
                 if st.checkbox(f"{k}. {v}", key=f"exam_multi_{idx}_{k}"):
                     selected.append(k)
-            user_ans = ''.join(sorted([mapping[k] if mapping else k for k in selected])) if selected else ""
+            # 转换为排序后的字符串
+            if mapping:
+                selected_orig = [mapping[ch] for ch in selected if ch in mapping]
+            else:
+                selected_orig = selected
+            selected_orig.sort()
+            user_ans = ''.join(selected_orig)
         elif q['type'] == 'judge':
             choice = st.radio("请选择", ["正确", "错误"], key=f"exam_judge_{idx}", horizontal=False)
-            user_ans = "A" if choice == "正确" else "B"
+            selected = "A" if choice == "正确" else "B"
             if mapping:
-                user_ans = mapping.get(user_ans, user_ans)
+                user_ans = mapping.get(selected, selected)
+            else:
+                user_ans = selected
         else:
             opt_keys = list(opts.keys())
             choice = st.radio("请选择", [f"{k}. {opts[k]}" for k in opt_keys], key=f"exam_single_{idx}", horizontal=False)
-            user_ans = choice.split(".")[0].strip()
+            selected = choice.split(".")[0].strip()
             if mapping:
-                user_ans = mapping.get(user_ans, user_ans)
+                user_ans = mapping.get(selected, selected)
+            else:
+                user_ans = selected
         
         col1, col2 = st.columns(2)
         with col1:
@@ -270,7 +290,7 @@ elif st.session_state.mode == "search":
         st.session_state.mode = "menu"
         st.rerun()
 
-# ---------------------------- 普通练习（修复多选题空值错误）----------------------------
+# ---------------------------- 普通练习（修复多选字符串问题）----------------------------
 elif st.session_state.mode == "practice":
     total = len(st.session_state.q_list)
     idx = st.session_state.index
@@ -287,7 +307,8 @@ elif st.session_state.mode == "practice":
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
-        selected_raw = None  # 用于存储用户的选择结果
+        # 存储用户选择的答案（字符串形式）
+        selected_raw = None
         
         if q['type'] == 'multiple':
             selected_keys = []
@@ -302,7 +323,7 @@ elif st.session_state.mode == "practice":
                 orig_selected.sort()
                 selected_raw = ''.join(orig_selected)
             else:
-                selected_raw = []   # 空列表表示未选
+                selected_raw = ""   # 空字符串表示未选
         elif q['type'] == 'judge':
             choice = st.radio("请选择", ["正确", "错误"], key=f"judge_{idx}", horizontal=False)
             selected = "A" if choice == "正确" else "B"
@@ -321,7 +342,7 @@ elif st.session_state.mode == "practice":
         
         # 提交按钮
         if st.button("提交答案", key=f"submit_{idx}"):
-            if (q['type'] == 'multiple' and selected_raw == []) or (q['type'] != 'multiple' and selected_raw is None):
+            if (q['type'] == 'multiple' and selected_raw == "") or (q['type'] != 'multiple' and selected_raw is None):
                 st.warning("请先选择一个选项")
             else:
                 ok, ua, ca = check_selected(q, selected_raw, mapping if q['type'] != 'multiple' else None)
@@ -336,7 +357,7 @@ elif st.session_state.mode == "practice":
         if st.session_state.show_result and st.session_state.result_info:
             st.info(st.session_state.result_info)
         
-        # 上一题 / 下一题按钮（始终显示）
+        # 上一题 / 下一题按钮
         col_left, col_mid, col_right = st.columns([1,1,1])
         with col_left:
             if idx > 0:
