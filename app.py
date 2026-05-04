@@ -30,9 +30,8 @@ if "subject" not in st.session_state:
     st.session_state.mode = "menu"
     st.session_state.q_list = []
     st.session_state.index = 0
-    st.session_state.exam_answers = []
-    st.session_state.selected_options = []
-    st.session_state.radio_choice = None
+    st.session_state.exam_answers = {}        # 键：题号，值：用户答案字符串
+    st.session_state.favorites = set()        # 收藏的题号
     st.session_state.show_result = False
     st.session_state.result_info = None
 
@@ -57,7 +56,6 @@ with st.sidebar:
         st.session_state.q_list = st.session_state.questions[:]
         st.session_state.index = 0
         st.session_state.show_result = False
-        st.session_state.result_info = None
         st.rerun()
     if st.button("🎲 随机练习（全部）", use_container_width=True):
         q_list = st.session_state.questions[:]
@@ -66,7 +64,6 @@ with st.sidebar:
         st.session_state.q_list = q_list
         st.session_state.index = 0
         st.session_state.show_result = False
-        st.session_state.result_info = None
         st.rerun()
     if st.button("📚 按章节练习", use_container_width=True):
         chapters = sorted(set(q['chapter'] for q in st.session_state.questions))
@@ -82,6 +79,16 @@ with st.sidebar:
     if st.button("🔎 搜索题目", use_container_width=True):
         st.session_state.mode = "search"
         st.rerun()
+    if st.button("❤️ 我的收藏", use_container_width=True):
+        fav_qs = [q for q in st.session_state.questions if q['number'] in st.session_state.favorites]
+        if fav_qs:
+            st.session_state.mode = "practice"
+            st.session_state.q_list = fav_qs
+            st.session_state.index = 0
+            st.session_state.show_result = False
+            st.rerun()
+        else:
+            st.warning("暂无收藏题目")
 
 # ---------------------------- 辅助函数 ----------------------------
 def display_question(q, shuffle):
@@ -95,24 +102,13 @@ def display_question(q, shuffle):
     return opts, None
 
 def check_selected(q, selected, mapping=None):
-    """selected: 对于多选，可以是列表或已排序的字符串；对于单选/判断是单个字母"""
+    """selected: 对于多选是排序后的字符串，对于单选/判断是单个字母"""
     if q['type'] == 'multiple':
-        if not selected:   # 空列表或空字符串
+        if not selected:
             return False, "", q['answer']
-        # 如果 selected 已经是字符串，直接使用
-        if isinstance(selected, str):
-            user_ans = selected
-        else:
-            # selected 是列表
-            if mapping:
-                selected_orig = [mapping[ch] for ch in selected if ch in mapping]
-            else:
-                selected_orig = selected
-            selected_orig.sort()
-            user_ans = ''.join(selected_orig)
-        return user_ans == q['answer'], user_ans, q['answer']
+        # selected 已经是排序后的字符串，直接比较
+        return selected == q['answer'], selected, q['answer']
     else:
-        # 单选或判断
         if mapping and selected in mapping:
             selected_orig = mapping[selected]
         else:
@@ -122,8 +118,14 @@ def check_selected(q, selected, mapping=None):
 def clear_practice_state():
     st.session_state.show_result = False
     st.session_state.result_info = None
-    st.session_state.selected_options = []
-    st.session_state.radio_choice = None
+
+def add_favorite(q_num):
+    st.session_state.favorites.add(q_num)
+    st.toast(f"已收藏第 {q_num} 题", icon="❤️")
+
+def remove_favorite(q_num):
+    st.session_state.favorites.discard(q_num)
+    st.toast(f"已取消收藏第 {q_num} 题", icon="💔")
 
 # ---------------------------- 页面内容 ----------------------------
 st.title("📖 会计刷题系统")
@@ -132,7 +134,7 @@ st.title("📖 会计刷题系统")
 if st.session_state.mode == "menu":
     st.info("👈 请从左侧侧边栏选择练习模式")
     st.markdown("### 功能说明")
-    st.markdown("- **顺序/随机练习**：直接开始\n- **按章节练习**：选择特定章节\n- **按题型练习**：单选/多选/判断\n- **模拟考试**：随机抽题，最后判分\n- **搜索题目**：查找题目详情")
+    st.markdown("- **顺序/随机练习**：直接开始\n- **按章节练习**：选择特定章节\n- **按题型练习**：单选/多选/判断\n- **模拟考试**：随机抽题，最后判分\n- **搜索题目**：查找题目详情\n- **我的收藏**：查看已收藏的题目")
 
 # 按章节选择
 elif st.session_state.mode == "chapter_select":
@@ -198,76 +200,148 @@ elif st.session_state.mode == "exam_setup":
         st.session_state.mode = "exam"
         st.session_state.q_list = exam_qs
         st.session_state.index = 0
-        st.session_state.exam_answers = []
+        st.session_state.exam_answers = {}       # 清空已有答案
         clear_practice_state()
         st.rerun()
     if st.button("返回"):
         st.session_state.mode = "menu"
         st.rerun()
 
-# 考试中
+# 考试中（带答题卡）
 elif st.session_state.mode == "exam":
     total = len(st.session_state.q_list)
     idx = st.session_state.index
-    if idx >= total:
-        score = 0
-        st.subheader("考试结果")
-        for q, ua in st.session_state.exam_answers:
-            if ua == q['answer']:
-                score += 1
+    
+    # 侧边栏显示答题卡
+    with st.sidebar:
+        st.markdown("### 📋 答题卡")
+        col1, col2, col3 = st.columns(3)
+        for i, q in enumerate(st.session_state.q_list):
+            q_num = q['number']
+            answered = q_num in st.session_state.exam_answers
+            bg_color = "green" if answered else "gray"
+            # 每列放置多个按钮（简单分列）
+            if i % 3 == 0:
+                with col1:
+                    if st.button(f"{q_num}", key=f"exam_jump_{i}", help=f"题目{'已答' if answered else '未答'}"):
+                        st.session_state.index = i
+                        st.rerun()
+            elif i % 3 == 1:
+                with col2:
+                    if st.button(f"{q_num}", key=f"exam_jump_{i}"):
+                        st.session_state.index = i
+                        st.rerun()
             else:
-                st.error(f"❌ 第 {q['number']} 题 错误，正确答案：{q['answer']}，你的答案：{ua}")
-                st.info(f"解析：{q['explanation']}")
-        st.success(f"得分：{score}/{total} ({score/total*100:.1f}%)")
-        if st.button("返回主菜单"):
-            st.session_state.mode = "menu"
+                with col3:
+                    if st.button(f"{q_num}", key=f"exam_jump_{i}"):
+                        st.session_state.index = i
+                        st.rerun()
+        st.markdown("---")
+        if st.button("提交试卷"):
+            # 计算得分
+            score = 0
+            for q in st.session_state.q_list:
+                user_ans = st.session_state.exam_answers.get(q['number'], "")
+                if user_ans == q['answer']:
+                    score += 1
+            st.session_state.mode = "exam_result"
+            st.session_state.exam_score = score
             st.rerun()
-    else:
+    
+    if idx < total:
         q = st.session_state.q_list[idx]
         st.subheader(f"第 {idx+1}/{total} 题")
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
+        # 获取当前题目的已有答案（如果之前答过）
+        saved_answer = st.session_state.exam_answers.get(q['number'], "")
+        user_ans = None
+        
+        # 使用动态key确保每次重新渲染时组件状态重置
         if q['type'] == 'multiple':
             selected = []
             for k, v in opts.items():
-                if st.checkbox(f"{k}. {v}", key=f"exam_multi_{idx}_{k}"):
+                is_checked = (saved_answer and k in saved_answer)  # 简单判断，但多选答案可能含多个字母
+                if st.checkbox(f"{k}. {v}", value=is_checked, key=f"exam_multi_{idx}_{k}"):
                     selected.append(k)
-            # 转换为排序后的字符串
-            if mapping:
-                selected_orig = [mapping[ch] for ch in selected if ch in mapping]
-            else:
-                selected_orig = selected
-            selected_orig.sort()
-            user_ans = ''.join(selected_orig)
+            if selected:
+                if mapping:
+                    orig = [mapping[ch] for ch in selected if ch in mapping]
+                else:
+                    orig = selected
+                orig.sort()
+                user_ans = ''.join(orig)
         elif q['type'] == 'judge':
-            choice = st.radio("请选择", ["正确", "错误"], key=f"exam_judge_{idx}", horizontal=False)
-            selected = "A" if choice == "正确" else "B"
-            if mapping:
+            # 判断题：默认无选中，所以要给radio设置index=None，但需要特殊处理
+            # 这里用选择框代替，避免默认选中
+            choice = st.radio("请选择", ["正确", "错误"], key=f"exam_judge_{idx}", horizontal=False, index=None)
+            if choice == "正确":
+                selected = "A"
+            elif choice == "错误":
+                selected = "B"
+            else:
+                selected = ""
+            if selected and mapping:
                 user_ans = mapping.get(selected, selected)
             else:
                 user_ans = selected
         else:
             opt_keys = list(opts.keys())
-            choice = st.radio("请选择", [f"{k}. {opts[k]}" for k in opt_keys], key=f"exam_single_{idx}", horizontal=False)
-            selected = choice.split(".")[0].strip()
-            if mapping:
-                user_ans = mapping.get(selected, selected)
+            # 同样设置index=None避免默认选中
+            choice = st.radio("请选择", [f"{k}. {opts[k]}" for k in opt_keys], key=f"exam_single_{idx}", horizontal=False, index=None)
+            if choice:
+                selected = choice.split(".")[0].strip()
+                if mapping:
+                    user_ans = mapping.get(selected, selected)
+                else:
+                    user_ans = selected
             else:
-                user_ans = selected
+                user_ans = ""
         
+        # 保存答案按钮
+        if st.button("保存本题答案", key=f"save_exam_{idx}"):
+            if user_ans:
+                st.session_state.exam_answers[q['number']] = user_ans
+                st.success("答案已保存")
+            else:
+                st.warning("请先选择一个选项")
+        
+        # 显示当前已保存的答案
+        if q['number'] in st.session_state.exam_answers:
+            st.info(f"当前已保存答案：{st.session_state.exam_answers[q['number']]}")
+        
+        # 上一题/下一题按钮
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("下一题", key=f"next_exam_{idx}"):
-                st.session_state.exam_answers.append((q, user_ans))
-                st.session_state.index += 1
-                st.rerun()
+            if idx > 0:
+                if st.button("上一题"):
+                    st.session_state.index -= 1
+                    st.rerun()
         with col2:
-            if st.button("退出考试"):
-                st.session_state.mode = "menu"
-                st.rerun()
+            if idx < total - 1:
+                if st.button("下一题"):
+                    st.session_state.index += 1
+                    st.rerun()
 
-# 搜索题目
+# 考试结果
+elif st.session_state.mode == "exam_result":
+    total = len(st.session_state.q_list)
+    score = st.session_state.exam_score
+    st.subheader("📊 考试结果")
+    st.success(f"得分：{score}/{total} ({score/total*100:.1f}%)")
+    # 展示错题解析
+    for q in st.session_state.q_list:
+        user_ans = st.session_state.exam_answers.get(q['number'], "")
+        if user_ans != q['answer']:
+            st.error(f"第 {q['number']} 题 错误")
+            st.write(f"你的答案：{user_ans}，正确答案：{q['answer']}")
+            st.info(f"解析：{q['explanation']}")
+    if st.button("返回主菜单"):
+        st.session_state.mode = "menu"
+        st.rerun()
+
+# 搜索题目（显示完整内容）
 elif st.session_state.mode == "search":
     st.subheader("🔎 搜索题目")
     keyword = st.text_input("输入题号或关键词")
@@ -278,19 +352,21 @@ elif st.session_state.mode == "search":
         else:
             results = [q for q in st.session_state.questions if keyword.lower() in q['text'].lower() or any(keyword.lower() in opt.lower() for opt in q['options'].values())]
         if not results:
-            st.warning("未找到")
+            st.warning("未找到题目")
         else:
-            for q in results[:20]:
-                with st.expander(f"【{q['type']}】{q['number']}. {q['text'][:80]}"):
-                    for opt, txt in q['options'].items():
-                        st.write(f"{opt}. {txt}")
-                    st.write(f"答案：{q['answer']}")
-                    st.write(f"解析：{q['explanation']}")
+            for q in results:
+                # 直接展示完整题目，不用expander
+                st.markdown(f"**【{q['type']}】{q['number']}. {q['text']}**")
+                for opt, txt in q['options'].items():
+                    st.write(f"{opt}. {txt}")
+                st.write(f"答案：{q['answer']}")
+                st.write(f"解析：{q['explanation']}")
+                st.markdown("---")
     if st.button("返回主菜单"):
         st.session_state.mode = "menu"
         st.rerun()
 
-# ---------------------------- 普通练习（修复多选字符串问题）----------------------------
+# 普通练习（顺序/随机/章节/题型/收藏）
 elif st.session_state.mode == "practice":
     total = len(st.session_state.q_list)
     idx = st.session_state.index
@@ -307,45 +383,51 @@ elif st.session_state.mode == "practice":
         opts, mapping = display_question(q, st.session_state.shuffle_opts)
         st.write(f"**{q['number']}. {q['text']}**")
         
-        # 存储用户选择的答案（字符串形式）
-        selected_raw = None
+        # 使用动态key并设置index=None，确保默认不选中
+        user_ans = None
         
         if q['type'] == 'multiple':
-            selected_keys = []
+            selected = []
             for k, v in opts.items():
                 if st.checkbox(f"{k}. {v}", key=f"multi_{idx}_{k}"):
-                    selected_keys.append(k)
-            if selected_keys:
+                    selected.append(k)
+            if selected:
                 if mapping:
-                    orig_selected = [mapping[ch] for ch in selected_keys if ch in mapping]
+                    orig = [mapping[ch] for ch in selected if ch in mapping]
                 else:
-                    orig_selected = selected_keys
-                orig_selected.sort()
-                selected_raw = ''.join(orig_selected)
-            else:
-                selected_raw = ""   # 空字符串表示未选
+                    orig = selected
+                orig.sort()
+                user_ans = ''.join(orig)
         elif q['type'] == 'judge':
-            choice = st.radio("请选择", ["正确", "错误"], key=f"judge_{idx}", horizontal=False)
-            selected = "A" if choice == "正确" else "B"
-            if mapping:
-                selected_raw = mapping.get(selected, selected)
+            choice = st.radio("请选择", ["正确", "错误"], key=f"judge_{idx}", horizontal=False, index=None)
+            if choice == "正确":
+                selected = "A"
+            elif choice == "错误":
+                selected = "B"
             else:
-                selected_raw = selected
+                selected = ""
+            if selected and mapping:
+                user_ans = mapping.get(selected, selected)
+            else:
+                user_ans = selected
         else:
             opt_keys = list(opts.keys())
-            choice = st.radio("请选择", [f"{k}. {opts[k]}" for k in opt_keys], key=f"single_{idx}", horizontal=False)
-            selected = choice.split(".")[0].strip()
-            if mapping:
-                selected_raw = mapping.get(selected, selected)
+            choice = st.radio("请选择", [f"{k}. {opts[k]}" for k in opt_keys], key=f"single_{idx}", horizontal=False, index=None)
+            if choice:
+                selected = choice.split(".")[0].strip()
+                if mapping:
+                    user_ans = mapping.get(selected, selected)
+                else:
+                    user_ans = selected
             else:
-                selected_raw = selected
+                user_ans = ""
         
-        # 提交按钮
+        # 提交答案
         if st.button("提交答案", key=f"submit_{idx}"):
-            if (q['type'] == 'multiple' and selected_raw == "") or (q['type'] != 'multiple' and selected_raw is None):
+            if user_ans is None or user_ans == "":
                 st.warning("请先选择一个选项")
             else:
-                ok, ua, ca = check_selected(q, selected_raw, mapping if q['type'] != 'multiple' else None)
+                ok, ua, ca = check_selected(q, user_ans, mapping if q['type'] != 'multiple' else None)
                 if ok:
                     st.session_state.result_info = f"✅ 回答正确！ 正确答案：{ca}"
                 else:
@@ -357,23 +439,32 @@ elif st.session_state.mode == "practice":
         if st.session_state.show_result and st.session_state.result_info:
             st.info(st.session_state.result_info)
         
-        # 上一题 / 下一题按钮
-        col_left, col_mid, col_right = st.columns([1,1,1])
-        with col_left:
+        # 收藏按钮
+        col_btns = st.columns([1,1,1,1])
+        with col_btns[0]:
+            if q['number'] in st.session_state.favorites:
+                if st.button("💔 取消收藏", key=f"unfav_{idx}"):
+                    remove_favorite(q['number'])
+                    st.rerun()
+            else:
+                if st.button("❤️ 收藏本题", key=f"fav_{idx}"):
+                    add_favorite(q['number'])
+                    st.rerun()
+        with col_btns[1]:
             if idx > 0:
                 if st.button("⬅️ 上一题", key="prev_btn"):
                     st.session_state.index -= 1
                     st.session_state.show_result = False
                     st.session_state.result_info = None
                     st.rerun()
-        with col_right:
+        with col_btns[2]:
             if idx < total - 1:
                 if st.button("下一题 ➡️", key="next_btn"):
                     st.session_state.index += 1
                     st.session_state.show_result = False
                     st.session_state.result_info = None
                     st.rerun()
-        with col_mid:
+        with col_btns[3]:
             if st.button("退出练习"):
                 st.session_state.mode = "menu"
                 st.rerun()
